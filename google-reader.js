@@ -10,6 +10,8 @@ _.string.include('Underscore.string', 'string'); // => true
 var http = require("http");
 var https = require("https");
 var requestModule = require('request');
+
+
 	/* LOCAL STORAGE WRAPPER FOR SHIT */
     var localStorage =[];
 	function localStorageWrapper (key) {
@@ -160,10 +162,10 @@ var requestModule = require('request');
 			var googleHeaders = {};
 			if (readerAuth.get() && !noAuth) {
 				//this one is important. This is how google does authorization.
-				 googleHeaders = {"Authorization" : "GoogleLogin auth=" + readerAuth.get()};
+				 googleHeaders = {"Authorization" : "GoogleLogin auth=" + readerAuth.get(), 'content-type': 'application/x-www-form-urlencoded'};
 				 
 			}
-			console.log(obj.url);
+			
 			if(obj.url == 'https://www.google.com/reader/api/0/user-info'){
 				url = 'https://www.google.com/reader/api/0/user-info?output=json';
 			}else if(obj.url == 'https://www.google.com/reader/api/0/preference/stream/list' ){
@@ -174,17 +176,26 @@ var requestModule = require('request');
 				url = 'https://www.google.com/reader/api/0/tag/list?output=json';
 			}else if(obj.url == 'https://www.google.com/reader/api/0/unread-count' ){
 				url = 'https://www.google.com/reader/api/0/unread-count?output=json';
+			}else if(obj.url == 'https://www.google.com/reader/api/0/token' ){
+				url = 'https://www.google.com/reader/api/0/token?output=json';
 			}
-			var request = {uri:url, headers :googleHeaders, method:obj.method};
+			console.log('hola %o', url);
+			console.log('hola %o', obj.parameters.s);
+			
+			if(typeof(obj.isItems) != 'undefined' && obj.isItems == true){
+				url = obj.url;
+			}
+			
+			if(obj.method == 'POST'){
+			
+				var request = {uri:url, headers :googleHeaders, body:require('querystring').stringify(obj.parameters),  method:obj.method};
+			}else{
+				var request = {uri:url, headers :googleHeaders, method:obj.method};
+			}
+			
 			
 			var r = requestModule(request, function (error, response, body) {
-			 
-				if (!error && response.statusCode == 200) {
-					
-				  parseResponseGoogleReader(error, response, body)
-				}else{
-					console.log('An ERROR has ocurred');
-				}
+				  parseResponseGoogleReader(error, response, body);
 			});
 			
 			if(obj.url == 'https://www.google.com/reader/api/0/user-info'){
@@ -195,10 +206,12 @@ var requestModule = require('request');
 				r.pipe(fs.createWriteStream('RESPONSES/subscription-list.txt'))
 			}else if(obj.url == 'https://www.google.com/reader/api/0/tag/list' ){
 				r.pipe(fs.createWriteStream('RESPONSES/tag-list.txt'))
+			}else if(obj.url == 'https://www.google.com/reader/api/0/token' ){
+				r.pipe(fs.createWriteStream('RESPONSES/token.txt'))
 			}else if(obj.url == 'https://www.google.com/reader/api/0/unread-count' ){
 				r.pipe(fs.createWriteStream('RESPONSES/unread-count.txt'))
 			}
-			//r.pipe(fs.createWriteStream('pushlog.txt'))
+			r.pipe(fs.createWriteStream('RESPONSES/pushlog.txt'))
 			/*FIN MICODIGO*/
 			
 			
@@ -234,7 +247,7 @@ var requestModule = require('request');
 							}
 						}
 					}
-					if (response.statusCode === 401 && response.statusText === "Unauthorized") {
+					if (response.statusCode === 401 ) {
 						//This probably means your Auth expired. The user needs to log in again.
 
 						//Humane is a notification lib. (yes this is bad practice, but easier than checking for this on every fail callback) 
@@ -246,7 +259,8 @@ var requestModule = require('request');
 						}
 					}
 
-					console.error("Request Failed: " + response);
+					console.error("Request Failed: " + response.statusCode);
+					response.pipe(fs.createWriteStream('RESPONSES/jodido.txt'))
 				}
 			};
 
@@ -286,17 +300,16 @@ var requestModule = require('request');
 				Passwd: password
 			},
 			onSuccess: function (transport) {
-				console.log('SUCCESS LOGIN');
-				//writeToFile(_.lines(transport.body)[2].replace("Auth=", ""),'auto.txt');
 				//this is what authorizes every action the user takes
 				readerAuth.set(_.lines(transport.body)[2].replace("Auth=", ""));
 				
 				getUserInfo(successCallback, failCallback);
-	
+				
 			},
 			onFailure: function (transport) {
 				console.error(transport);
 				failCallback(reader.normalizeError(transport.body));
+				
 			}
 		});
 		
@@ -305,7 +318,7 @@ var requestModule = require('request');
 	//Gets our token for POST requests; saved to localStorage;.
 	//If it fails, your auth header has expired and you need to have the user login again.
 	reader.getToken = function (successCallback, failCallback) {
-	  console.log('succSSCLABLAC %o', succesCallBack);
+	 
 		makeRequest({
 			method: "GET",
 			url: BASE_URL + TOKEN_SUFFIX,
@@ -613,6 +626,7 @@ var requestModule = require('request');
 			method: "POST",
 			url: BASE_URL + SUBSCRIPTIONS_PATH + EDIT_SUFFIX,
 			parameters: params,
+			isItems: true,
 			onSuccess: function (transport) {
 				successCallback(transport.body);
 			}, 
@@ -701,12 +715,23 @@ var requestModule = require('request');
 		}, successCallback);
 	};
 
-	reader.subscribeFeed = function (feedUrl, successCallback, title) {
-		editFeed({
+	reader.subscribeFeed = function (feedUrl, successCallback, title, label) {
+		if(label != ''){
+			
+			editFeed({
+			ac: "subscribe",
+			s: "feed/" + feedUrl,
+			t: title || undefined,
+			a: 'user/'+readerUser.get().userId+'/label/'+label 
+			}, successCallback);
+		}else{
+			editFeed({
 			ac: "subscribe",
 			s: "feed/" + feedUrl,
 			t: title || undefined
-		}, successCallback);
+			}, successCallback);
+		}
+		
 	};
 
 	// This function searches Google's feed API to find RSS feeds.
@@ -722,7 +747,7 @@ var requestModule = require('request');
 				onSuccess: function (transport) {
 					var response = JSON.parse(transport.body);
 					if (response.responseStatus === 200) {
-						successCallback({isFeed: true, title: response.responseData.feed.title})
+						successCallback({isFeed: true, title: response.responseData.feed.title, data: response.responseData})
 					} else {
 						reader.searchForFeeds(input, successCallback, failCallback);
 					}
@@ -789,7 +814,8 @@ var requestModule = require('request');
 			}, 
 			onFailure: function (transport) {
 				console.error(transport);
-			}
+			},
+			isItems: true
 		});
 	};
 
